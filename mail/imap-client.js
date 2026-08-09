@@ -39,34 +39,65 @@ function withImap(config, fn) {
 
 /**
  * Fetch messages by sequence numbers. Returns parsed message objects.
+ *
+ * Uses imap.seq.fetch (sequence-number mode): node-imap's public fetch()
+ * is UID-based, and passing sequence numbers to it silently returns a
+ * subset once the mailbox has been expunged (UIDs drift from seqnos).
+ *
+ * Also robust against messages whose requested body part the server never
+ * delivers: instead of relying on the per-message 'end' event (which never
+ * fires for such messages), we resolve on the fetch-level 'end' and walk
+ * the expected sequence numbers, emitting a placeholder entry for anything
+ * missing rather than dropping it silently.
+ *
  * Pass a Set of unseen sequence numbers to get an accurate `seen` flag.
  */
+function expandRange(range) {
+  const seqnos = [];
+  for (const part of String(range).split(',')) {
+    const [a, b] = part.split(':').map(Number);
+    if (b === undefined) {
+      seqnos.push(a);
+    } else {
+      for (let i = a; i <= b; i++) seqnos.push(i);
+    }
+  }
+  return seqnos;
+}
+
 function fetchMessages(imap, seqnos, bodiesOpt = '', unseenIds = null) {
   return new Promise((resolve, reject) => {
     if (seqnos.length === 0) { resolve([]); return; }
 
-    const messages = [];
-    const f = imap.fetch(seqnos, { bodies: bodiesOpt, struct: true });
+    const bySeqno = new Map();
+    const f = imap.seq.fetch(seqnos, { bodies: bodiesOpt, struct: true });
 
     f.on('message', (msg, seqno) => {
-      let raw = '';
+      const rec = { seqno, raw: '', ended: false };
+      bySeqno.set(seqno, rec);
       msg.on('body', (stream) => {
-        stream.on('data', (chunk) => { raw += chunk.toString('utf8'); });
+        stream.on('data', (chunk) => { rec.raw += chunk.toString('utf8'); });
       });
-      msg.once('end', () => {
-        messages.push({ seqno, raw });
-      });
+      msg.once('end', () => { rec.ended = true; });
     });
 
     f.once('error', reject);
     f.once('end', async () => {
       const parsed = [];
-      for (const m of messages) {
-        const seen = unseenIds ? !unseenIds.has(m.seqno) : true;
+      const seqnoList = Array.isArray(seqnos) ? seqnos : expandRange(seqnos);
+      for (const seqno of seqnoList) {
+        const rec = bySeqno.get(seqno);
+        const seen = unseenIds ? !unseenIds.has(seqno) : true;
+        if (!rec || !rec.ended) {
+          // The server did not deliver the requested body part for this
+          // message; include a placeholder instead of dropping it.
+          parsed.push({ message_id: seqno, subject: '(message unavailable)', from: '', to: '', cc: '', date: '', body: '', message_id_header: null, in_reply_to: null, references: [], seen });
+          continue;
+        }
         try {
-          const mail = await simpleParser(m.raw);
+          const mail = await simpleParser(rec.raw);
           parsed.push({
-            message_id: m.seqno,
+            message_id: seqno,
             subject: mail.subject || '(no subject)',
             from: mail.from?.text || 'unknown',
             to: mail.to?.text || '',
@@ -79,7 +110,7 @@ function fetchMessages(imap, seqnos, bodiesOpt = '', unseenIds = null) {
             seen,
           });
         } catch {
-          parsed.push({ message_id: m.seqno, subject: '(parse error)', from: '', to: '', date: '', body: '', message_id_header: null, in_reply_to: null, references: [], seen });
+          parsed.push({ message_id: seqno, subject: '(parse error)', from: '', to: '', date: '', body: '', message_id_header: null, in_reply_to: null, references: [], seen });
         }
       }
       resolve(parsed);
@@ -109,11 +140,12 @@ function openFolder(imap, folder, readOnly = true) {
 }
 
 /**
- * IMAP SEARCH wrapper.
+ * IMAP SEARCH wrapper. Sequence-number mode (imap.seq.search) so results
+ * line up with the seqno-based fetches used elsewhere in this file.
  */
 function imapSearch(imap, criteria) {
   return new Promise((resolve, reject) => {
-    imap.search(criteria, (err, results) => {
+    imap.seq.search(criteria, (err, results) => {
       if (err) reject(err);
       else resolve(results || []);
     });
@@ -250,7 +282,7 @@ export async function markMessage(config, messageId, read) {
   return withImap(config, async (imap) => {
     await openInbox(imap, false);
     await new Promise((resolve, reject) => {
-      const fn = read ? imap.addFlags.bind(imap) : imap.delFlags.bind(imap);
+      const fn = read ? imap.seq.addFlags.bind(imap.seq) : imap.seq.delFlags.bind(imap.seq);
       fn(messageId, ['\\Seen'], (err) => {
         if (err) reject(err); else resolve();
       });
@@ -263,7 +295,7 @@ export async function starMessage(config, messageId, star) {
   return withImap(config, async (imap) => {
     await openInbox(imap, false);
     await new Promise((resolve, reject) => {
-      const fn = star ? imap.addFlags.bind(imap) : imap.delFlags.bind(imap);
+      const fn = star ? imap.seq.addFlags.bind(imap.seq) : imap.seq.delFlags.bind(imap.seq);
       fn(messageId, ['\\Flagged'], (err) => {
         if (err) reject(err); else resolve();
       });
@@ -276,7 +308,7 @@ export async function deleteMessage(config, messageId) {
   return withImap(config, async (imap) => {
     await openInbox(imap, false);
     await new Promise((resolve, reject) => {
-      imap.store(messageId, '+FLAGS', ['\\Deleted'], (err) => {
+      imap.seq.addFlags(messageId, ['\\Deleted'], (err) => {
         if (err) reject(err); else resolve();
       });
     });
@@ -293,7 +325,7 @@ export async function moveMessage(config, messageId, destFolder) {
   return withImap(config, async (imap) => {
     await openInbox(imap, false);
     await new Promise((resolve, reject) => {
-      imap.move(messageId, destFolder, (err) => {
+      imap.seq.move(messageId, destFolder, (err) => {
         if (err) reject(err); else resolve();
       });
     });
@@ -354,7 +386,7 @@ export async function getAttachments(config, messageId) {
     await openInbox(imap, true);
 
     return new Promise((resolve, reject) => {
-      const f = imap.fetch([messageId], { bodies: '', struct: true });
+      const f = imap.seq.fetch([messageId], { bodies: '', struct: true });
       let raw = '';
 
       f.on('message', (msg) => {
