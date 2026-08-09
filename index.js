@@ -80,6 +80,14 @@ function errorResult(msg) {
   return { content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true };
 }
 
+// Shared attachments schema so send/reply/forward stay consistent.
+const attachmentSchema = z.array(z.object({
+  filename: z.string().describe('Attachment filename'),
+  path: z.string().optional().describe('Absolute path to file on disk'),
+  content: z.string().optional().describe('File content as base64 string'),
+  contentType: z.string().optional().describe('MIME type (optional, inferred from filename)'),
+})).optional().describe('Files to attach');
+
 // --- Tool: get_unread ---
 server.tool(
   'mail__get_unread',
@@ -132,7 +140,7 @@ server.tool(
 // --- Tool: search_messages ---
 server.tool(
   'mail__search_messages',
-  'Search emails by keyword in subject and body',
+  'Search emails by keyword in subject and body (searches INBOX, Sent, Drafts, and Archive)',
   {
     query: z.string().describe('Search query'),
   },
@@ -149,20 +157,15 @@ server.tool(
 // --- Tool: send_message ---
 server.tool(
   'mail__send_message',
-  'Send an email via Proton Mail. Supports CC, BCC, HTML, and file attachments.',
+  'Send an email via Proton Mail. Provide body (plain text), html, or both. Supports CC, BCC, and file attachments.',
   {
     to: z.string().describe('Recipient email address(es), comma-separated'),
     subject: z.string().describe('Email subject'),
-    body: z.string().describe('Email body (plain text)'),
+    body: z.string().optional().describe('Email body (plain text)'),
     html: z.string().optional().describe('HTML body (if provided, plain text body becomes fallback)'),
     cc: z.string().optional().describe('CC recipient(s), comma-separated'),
     bcc: z.string().optional().describe('BCC recipient(s), comma-separated'),
-    attachments: z.array(z.object({
-      filename: z.string(),
-      path: z.string().optional().describe('Absolute path to file on disk'),
-      content: z.string().optional().describe('File content as base64 string'),
-      contentType: z.string().optional().describe('MIME type (optional, inferred from filename)'),
-    })).optional().describe('Files to attach'),
+    attachments: attachmentSchema,
   },
   async (args) => {
     try {
@@ -184,12 +187,7 @@ server.tool(
     reply_all: z.boolean().optional().describe('Reply to all recipients (default: false, reply to sender only)'),
     cc: z.string().optional().describe('Additional CC recipient(s), comma-separated'),
     bcc: z.string().optional().describe('BCC recipient(s), comma-separated'),
-    attachments: z.array(z.object({
-      filename: z.string(),
-      path: z.string().optional(),
-      content: z.string().optional(),
-      contentType: z.string().optional(),
-    })).optional().describe('Files to attach'),
+    attachments: attachmentSchema,
   },
   async (args) => {
     try {
@@ -211,7 +209,7 @@ server.tool(
 // --- Tool: get_thread ---
 server.tool(
   'mail__get_thread',
-  'Fetch the full email chain (thread) for a message',
+  'Fetch the full email chain (thread) for a message (reconstructed from INBOX)',
   {
     message_id: z.number().describe('Sequence number of any message in the thread'),
   },
@@ -253,6 +251,7 @@ server.tool(
     body: z.string().optional().describe('Optional message to prepend'),
     cc: z.string().optional().describe('CC recipient(s), comma-separated'),
     bcc: z.string().optional().describe('BCC recipient(s), comma-separated'),
+    attachments: attachmentSchema,
   },
   async (args) => {
     try {
@@ -411,12 +410,12 @@ server.tool(
   'pass__get_item',
   'Get a credential from Proton Pass by name. Returns username, password, and URLs.',
   {
-    name: z.string().describe('Item title'),
+    title: z.string().describe('Item title'),
     vault: z.string().optional().describe('Vault name (default: NanoClaw)'),
   },
   async (args) => {
     try {
-      const result = await viewItem(args.name, args.vault);
+      const result = await viewItem(args.title, args.vault);
       const item = result.item;
       const login = item.content?.content?.Login || {};
       return { content: [{ type: 'text', text: JSON.stringify({
@@ -455,15 +454,15 @@ server.tool(
   'pass__update_item',
   'Update an existing credential in Proton Pass',
   {
-    name: z.string().describe('Item title to update'),
+    title: z.string().describe('Item title to update'),
     username: z.string().optional(),
     password: z.string().optional(),
     vault: z.string().optional().describe('Vault name (default: NanoClaw)'),
   },
   async (args) => {
     try {
-      const { name, vault, ...updates } = args;
-      const result = await updateItem(name, updates, vault);
+      const { title, vault, ...updates } = args;
+      const result = await updateItem(title, updates, vault);
       return { content: [{ type: 'text', text: JSON.stringify({ success: true, result }) }] };
     } catch (err) { return errorResult(err.message); }
   },
@@ -474,12 +473,12 @@ server.tool(
   'pass__trash_item',
   'Move a credential to the trash in Proton Pass',
   {
-    name: z.string().describe('Item title to trash'),
+    title: z.string().describe('Item title to trash'),
     vault: z.string().optional().describe('Vault name (default: NanoClaw)'),
   },
   async (args) => {
     try {
-      const result = await trashItem(args.name, args.vault);
+      const result = await trashItem(args.title, args.vault);
       return { content: [{ type: 'text', text: JSON.stringify({ success: true, result }) }] };
     } catch (err) { return errorResult(err.message); }
   },
@@ -514,12 +513,12 @@ server.tool(
   'pass__get_totp',
   'Generate the current TOTP authentication code for an item in Proton Pass. Use for autonomous 2FA.',
   {
-    name: z.string().describe('Item title (must have a TOTP seed stored)'),
+    title: z.string().describe('Item title (must have a TOTP seed stored)'),
     vault: z.string().optional().describe('Vault name (default: NanoClaw)'),
   },
   async (args) => {
     try {
-      return { content: [{ type: 'text', text: JSON.stringify(await getTOTP(args.name, args.vault)) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(await getTOTP(args.title, args.vault)) }] };
     } catch (err) { return errorResult(err.message); }
   },
 );

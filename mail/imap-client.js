@@ -39,8 +39,9 @@ function withImap(config, fn) {
 
 /**
  * Fetch messages by sequence numbers. Returns parsed message objects.
+ * Pass a Set of unseen sequence numbers to get an accurate `seen` flag.
  */
-function fetchMessages(imap, seqnos, bodiesOpt = '') {
+function fetchMessages(imap, seqnos, bodiesOpt = '', unseenIds = null) {
   return new Promise((resolve, reject) => {
     if (seqnos.length === 0) { resolve([]); return; }
 
@@ -61,10 +62,11 @@ function fetchMessages(imap, seqnos, bodiesOpt = '') {
     f.once('end', async () => {
       const parsed = [];
       for (const m of messages) {
+        const seen = unseenIds ? !unseenIds.has(m.seqno) : true;
         try {
           const mail = await simpleParser(m.raw);
           parsed.push({
-            id: m.seqno,
+            message_id: m.seqno,
             subject: mail.subject || '(no subject)',
             from: mail.from?.text || 'unknown',
             to: mail.to?.text || '',
@@ -74,10 +76,10 @@ function fetchMessages(imap, seqnos, bodiesOpt = '') {
             message_id_header: mail.messageId || null,
             in_reply_to: mail.inReplyTo || null,
             references: mail.references || [],
-            seen: true, // will be overridden by caller if needed
+            seen,
           });
         } catch {
-          parsed.push({ id: m.seqno, subject: '(parse error)', from: '', to: '', date: '', body: '', message_id_header: null, in_reply_to: null, references: [], seen: true });
+          parsed.push({ message_id: m.seqno, subject: '(parse error)', from: '', to: '', date: '', body: '', message_id_header: null, in_reply_to: null, references: [], seen });
         }
       }
       resolve(parsed);
@@ -127,11 +129,12 @@ export async function getUnread(config) {
     if (uids.length === 0) return { count: 0, messages: [] };
 
     const recent = uids.slice(-20);
-    const messages = await fetchMessages(imap, recent, 'HEADER');
+    const unseenSet = new Set(uids);
+    const messages = await fetchMessages(imap, recent, 'HEADER', unseenSet);
     return {
       count: uids.length,
       messages: messages.map((m) => ({
-        id: m.id,
+        message_id: m.message_id,
         subject: m.subject,
         from: m.from,
         date: m.date,
@@ -152,9 +155,9 @@ export async function listMessages(config, limit = 10) {
     const messages = await fetchMessages(imap, range, 'HEADER');
 
     // Check which are unseen
-    const unseenIds = new Set(await imapSearch(imap, ['UNSEEN']));
+    const unseenSet = new Set(await imapSearch(imap, ['UNSEEN']));
     return messages
-      .map((m) => ({ ...m, seen: !unseenIds.has(m.id), body: undefined }))
+      .map((m) => ({ ...m, seen: !unseenSet.has(m.message_id), body: undefined }))
       .reverse();
   });
 }
@@ -162,7 +165,8 @@ export async function listMessages(config, limit = 10) {
 export async function getMessage(config, messageId) {
   return withImap(config, async (imap) => {
     await openInbox(imap, true);
-    const messages = await fetchMessages(imap, [messageId], '');
+    const unseenSet = new Set(await imapSearch(imap, ['UNSEEN']));
+    const messages = await fetchMessages(imap, [messageId], '', unseenSet);
     if (messages.length === 0) throw new Error(`Message ${messageId} not found`);
     return messages[0];
   });
@@ -213,9 +217,10 @@ export async function getMessageHeaders(config, messageId) {
 export async function getThread(config, messageId) {
   return withImap(config, async (imap) => {
     await openInbox(imap, true);
+    const unseenSet = new Set(await imapSearch(imap, ['UNSEEN']));
 
     // 1. Fetch the starting message to get its threading headers
-    const startMsgs = await fetchMessages(imap, [messageId], '');
+    const startMsgs = await fetchMessages(imap, [messageId], '', unseenSet);
     if (startMsgs.length === 0) throw new Error(`Message ${messageId} not found`);
 
     // 2. Collect all Message-IDs in the thread
@@ -234,7 +239,7 @@ export async function getThread(config, messageId) {
 
     // 4. Fetch all matching messages
     const seqnoArray = [...allSeqnos];
-    const threadMsgs = await fetchMessages(imap, seqnoArray, '');
+    const threadMsgs = await fetchMessages(imap, seqnoArray, '', unseenSet);
 
     // 5. Sort chronologically
     return threadMsgs.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -337,8 +342,9 @@ export async function listMessagesInFolder(config, folder, limit = 10) {
     const range = `${start}:${total}`;
 
     const messages = await fetchMessages(imap, range, 'HEADER');
+    const unseenSet = new Set(await imapSearch(imap, ['UNSEEN']));
     return messages
-      .map((m) => ({ ...m, body: undefined }))
+      .map((m) => ({ ...m, seen: !unseenSet.has(m.message_id), body: undefined }))
       .reverse();
   });
 }

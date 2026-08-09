@@ -83,9 +83,9 @@ The server communicates via MCP stdio protocol.
 |------|-------------|
 | `mail__get_unread` | Get unread message count and summaries |
 | `mail__list_messages` | List recent messages from inbox |
-| `mail__get_message` | Get full message content by ID |
+| `mail__get_message` | Get full message content by sequence number |
 | `mail__search_messages` | Search across INBOX, Sent, Drafts, Archive |
-| `mail__get_thread` | Get all messages in a thread |
+| `mail__get_thread` | Reconstruct full conversation thread (from INBOX) |
 | `mail__send_message` | Send a new email |
 | `mail__reply_message` | Reply to a message (preserves threading) |
 | `mail__forward_message` | Forward a message to another recipient |
@@ -96,7 +96,6 @@ The server communicates via MCP stdio protocol.
 | `mail__list_folders` | List all mail folders |
 | `mail__list_folder_messages` | List messages in a specific folder |
 | `mail__get_attachments` | Download message attachments |
-| `mail__get_thread` | Reconstruct full conversation thread |
 
 ### Pass (9 tools)
 

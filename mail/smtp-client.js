@@ -20,6 +20,8 @@ function createTransporter(config) {
 }
 
 export async function sendMessage(config, { to, subject, body, html, cc, bcc, attachments }) {
+  if (!body && !html) throw new Error('Provide a body (plain text), html, or both');
+
   const transporter = createTransporter(config);
 
   const mailOpts = {
@@ -38,10 +40,10 @@ export async function sendMessage(config, { to, subject, body, html, cc, bcc, at
   }
 
   const info = await transporter.sendMail(mailOpts);
-  return { success: true, message_id: info.messageId };
+  return { success: true, smtp_message_id: info.messageId };
 }
 
-export async function forwardMessage(config, { originalMessageId, to, body, cc, bcc }) {
+export async function forwardMessage(config, { originalMessageId, to, body, cc, bcc, attachments }) {
   const original = await getFullMessage(config, originalMessageId);
 
   const fwdSubject = original.subject.startsWith('Fwd:')
@@ -59,9 +61,10 @@ export async function forwardMessage(config, { originalMessageId, to, body, cc, 
     bcc,
     subject: fwdSubject,
     text: fwdBody,
+    attachments,
   });
 
-  return { success: true, message_id: info.messageId };
+  return { success: true, smtp_message_id: info.messageId };
 }
 
 export async function replyMessage(config, { originalMessageId, body, cc, bcc, replyAll, attachments }) {
@@ -101,5 +104,5 @@ export async function replyMessage(config, { originalMessageId, body, cc, bcc, r
     attachments,
   });
 
-  return { success: true, message_id: info.messageId };
+  return { success: true, smtp_message_id: info.messageId };
 }
