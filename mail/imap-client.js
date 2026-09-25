@@ -194,12 +194,12 @@ export async function listMessages(config, limit = 10) {
   });
 }
 
-export async function getMessage(config, messageId) {
+export async function getMessage(config, messageId, folder = 'INBOX') {
   return withImap(config, async (imap) => {
-    await openInbox(imap, true);
+    await openBox(imap, folder, true);
     const unseenSet = new Set(await imapSearch(imap, ['UNSEEN']));
     const messages = await fetchMessages(imap, [messageId], '', unseenSet);
-    if (messages.length === 0) throw new Error(`Message ${messageId} not found`);
+    if (messages.length === 0) throw new Error(`Message ${messageId} not found in ${folder}`);
     return messages[0];
   });
 }
@@ -229,11 +229,11 @@ export async function searchMessages(config, query) {
   });
 }
 
-export async function getMessageHeaders(config, messageId) {
+export async function getMessageHeaders(config, messageId, folder = 'INBOX') {
   return withImap(config, async (imap) => {
-    await openInbox(imap, true);
+    await openBox(imap, folder, true);
     const messages = await fetchMessages(imap, [messageId], 'HEADER');
-    if (messages.length === 0) throw new Error(`Message ${messageId} not found`);
+    if (messages.length === 0) throw new Error(`Message ${messageId} not found in ${folder}`);
     return {
       messageId: messages[0].message_id_header,
       subject: messages[0].subject,
@@ -246,14 +246,14 @@ export async function getMessageHeaders(config, messageId) {
   });
 }
 
-export async function getThread(config, messageId) {
+export async function getThread(config, messageId, folder = 'INBOX') {
   return withImap(config, async (imap) => {
-    await openInbox(imap, true);
+    await openBox(imap, folder, true);
     const unseenSet = new Set(await imapSearch(imap, ['UNSEEN']));
 
     // 1. Fetch the starting message to get its threading headers
     const startMsgs = await fetchMessages(imap, [messageId], '', unseenSet);
-    if (startMsgs.length === 0) throw new Error(`Message ${messageId} not found`);
+    if (startMsgs.length === 0) throw new Error(`Message ${messageId} not found in ${folder}`);
 
     // 2. Collect all Message-IDs in the thread
     const refIds = [
@@ -278,9 +278,9 @@ export async function getThread(config, messageId) {
   });
 }
 
-export async function markMessage(config, messageId, read) {
+export async function markMessage(config, messageId, read, folder = 'INBOX') {
   return withImap(config, async (imap) => {
-    await openInbox(imap, false);
+    await openBox(imap, folder, false);
     await new Promise((resolve, reject) => {
       const fn = read ? imap.seq.addFlags.bind(imap.seq) : imap.seq.delFlags.bind(imap.seq);
       fn(messageId, ['\\Seen'], (err) => {
@@ -291,9 +291,9 @@ export async function markMessage(config, messageId, read) {
   });
 }
 
-export async function starMessage(config, messageId, star) {
+export async function starMessage(config, messageId, star, folder = 'INBOX') {
   return withImap(config, async (imap) => {
-    await openInbox(imap, false);
+    await openBox(imap, folder, false);
     await new Promise((resolve, reject) => {
       const fn = star ? imap.seq.addFlags.bind(imap.seq) : imap.seq.delFlags.bind(imap.seq);
       fn(messageId, ['\\Flagged'], (err) => {
@@ -304,9 +304,9 @@ export async function starMessage(config, messageId, star) {
   });
 }
 
-export async function deleteMessage(config, messageId) {
+export async function deleteMessage(config, messageId, folder = 'INBOX') {
   return withImap(config, async (imap) => {
-    await openInbox(imap, false);
+    await openBox(imap, folder, false);
     await new Promise((resolve, reject) => {
       imap.seq.addFlags(messageId, ['\\Deleted'], (err) => {
         if (err) reject(err); else resolve();
@@ -321,15 +321,18 @@ export async function deleteMessage(config, messageId) {
   });
 }
 
-export async function moveMessage(config, messageId, destFolder) {
+export async function moveMessage(config, messageId, destFolder, sourceFolder = 'INBOX') {
+  if (sourceFolder === destFolder) {
+    throw new Error(`Source folder and destination folder are the same: ${destFolder}`);
+  }
   return withImap(config, async (imap) => {
-    await openInbox(imap, false);
+    await openBox(imap, sourceFolder, false);
     await new Promise((resolve, reject) => {
       imap.seq.move(messageId, destFolder, (err) => {
         if (err) reject(err); else resolve();
       });
     });
-    return { success: true, message_id: messageId, moved_to: destFolder };
+    return { success: true, message_id: messageId, moved_from: sourceFolder, moved_to: destFolder };
   });
 }
 
@@ -381,9 +384,9 @@ export async function listMessagesInFolder(config, folder, limit = 10) {
   });
 }
 
-export async function getAttachments(config, messageId) {
+export async function getAttachments(config, messageId, folder = 'INBOX') {
   return withImap(config, async (imap) => {
-    await openInbox(imap, true);
+    await openBox(imap, folder, true);
 
     return new Promise((resolve, reject) => {
       const f = imap.seq.fetch([messageId], { bodies: '', struct: true });
