@@ -113,9 +113,11 @@ async function openFolder(imap, name, readOnly = true) {
 
 /**
  * Return the subset of `ids` that exist in the open folder, erroring if none do.
+ * Membership is checked against SEARCH ALL: Proton Bridge only returns the
+ * first UID from a `UID <set>` search criterion.
  */
 async function requireExisting(imap, ids, folderName) {
-  const found = new Set(await call(imap, 'search', [['UID', ids.join(',')]]));
+  const found = new Set(await call(imap, 'search', ['ALL']));
   const existing = ids.filter((id) => found.has(id));
   const missing = ids.filter((id) => !found.has(id));
   if (existing.length === 0) {
