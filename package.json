@@ -1,13 +1,16 @@
 {
   "name": "proton-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for Proton suite — Mail via Bridge (IMAP/SMTP) + Pass via CLI",
+  "version": "5.0.0",
+  "description": "MCP server for reading and sorting Proton Mail via Proton Bridge (IMAP). No sending, no deleting.",
   "type": "module",
   "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "imap": "^0.8.19",
     "mailparser": "^3.6.0",
-    "nodemailer": "^6.9.0",
-    "@modelcontextprotocol/sdk": "latest"
+    "zod": "^4.3.6"
   }
 }
